@@ -1,0 +1,142 @@
+---
+title: "coursera_practical_machine_learning"
+output:
+  html_document: default
+  pdf_document: default
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE, echo=FALSE}
+# install required packages
+# install.packages("caret", repos = "http://cran.us.r-project.org")
+# install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+library(caret)
+library(ggplot2)
+library(dplyr)
+library(rpart)
+library(gridExtra)
+```
+
+```{r, echo=FALSE, results='hide'}
+#loading the raw csv files in dataframes
+data_training = read.csv("/Users/freddemuynck/Desktop/dev/R/JohnsHopkins DataScienceSpecialization/johnshopkins-data-science-specialization/work/08_PracticalMachineLearning/Project/pml-training.csv")
+data_testing = read.csv("/Users/freddemuynck/Desktop/dev/R/JohnsHopkins DataScienceSpecialization/johnshopkins-data-science-specialization/work/08_PracticalMachineLearning/Project/pml-testing.csv")
+```
+
+# Executive Summary
+After exploring and cleaning the data, we proceed to train 3 models suited for a classifiation problem (Decision Tree Model, Gradient Boost Model, and Tree Bag). We perform a kfold cross validation when training each model. After comparing the accuracy and confusion matrices for each model, we choose the TreeBag model to proceed to the predition part of the assignmnent. 
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. At time of submiting the assignment this link is not working, we found the following useful reference resource instead https://perceptualui.org/publications/velloso13_ah.pdf
+
+# Exploratory data analysis
+```{r, echo=FALSE}
+data_training_nrows <- dim(data_training)[1]
+data_training_ncols <- dim(data_training)[2]
+data_testing_nrows <- dim(data_testing)[1]
+data_testing_ncols <- dim(data_testing)[2]
+```
+The training csv file contains `r format(data_training_nrows, scientific=FALSE)` rows and `r format(data_training_ncols, scientific=FALSE)` columns. The testing csv file contains `r format(data_testing_nrows, scientific=FALSE)` rows and `r format(data_testing_ncols, scientific=FALSE)` columns. We note that the classe column is fully populated and has the possible values of A,B,C,D and E . 
+
+``` {r, echo= FALSE, results='hide'}
+summary(data_training)
+sapply(data_training, n_distinct)
+dim(data_training)
+
+plot_1 <- ggplot(data_training, aes(x = classe)) + geom_bar()
+plot_2 <- ggplot(data_training, aes(x=X, y=roll_belt, color=classe)) +  geom_point(size=0.2, shape=1)
+plot_3 <- qplot(roll_belt, colour= classe, data=subset(data_training, classe %in% c("A", "B", "C", "D", "E")), geom='density')
+plot_4 <- qplot(pitch_belt, colour= classe, data=subset(data_training, classe %in% c("A", "B", "C", "D", "E")), geom='density')
+plot_5 <- qplot(yaw_belt, colour= classe, data=subset(data_training, classe %in% c("A", "B", "C", "D", "E")), geom='density')
+
+grid.arrange(plot_1, plot_2, plot_3, plot_4, plot_5, nrow = 3, ncol = 2)
+```
+
+Participants are asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions. Classe A captures the exercise when exactly performed to the specification. The other 4 classes (B,C,D,E) correspond to 4 common mistakes.
+
+The histogram above shows the distribution of Classe in the training data. We plot the classe of exercise over time showing that the protocol calls for users to perfom the exercise in class sequence. We then show the distribution of roll_belt, pitch_belt and yaw_belt for different classes. These show clear differences between classes.
+
+
+# Preprocessing
+```{r, echo=FALSE}
+NA_threshold_percent = 0.9
+cond <- colSums(is.na(data_training)) < nrow(data_training)*NA_threshold_percent
+clean_data_training <- data_training[, cond, drop = TRUE]
+clean_data_testing <- data_testing[, cond, drop = TRUE]
+clean_data_training <- clean_data_training[,-c(1,2,3,4,5,6,7)]
+clean_data_testing <- clean_data_testing[,-c(1,2,3,4,5,6,7)]
+
+remove_nearZero_cols <- nearZeroVar(clean_data_training, names = TRUE, freqCut = 19, uniqueCut = 10)
+
+clean_data_training <- clean_data_training[ , setdiff(names(clean_data_training), remove_nearZero_cols)]
+clean_data_testing <- clean_data_testing[ , setdiff(names(clean_data_testing), remove_nearZero_cols)]
+```
+
+We notice that some columns mostly contain NA. We decide to remove columns that contain more than 90% of NA. We further remove the first 7 columns which do not contain physical exercise measurment information as well as the columns which have near zero variance. This brings down the number of columns in our dataset from `r dim(data_training)[2]` to `r dim(clean_data_training)[2]`
+
+# Training Models
+
+We create a data partition of the training data retaining 30% for testing. We proceed to train 3 models based on 3 different classification methods which are mentionned in week3 of the course. Namely : Decision Tree Model, Gradient Boost Model and Bagging TreeBag. We use cross validation using k-fold method with number=5.
+
+```{r}
+inTrain <- createDataPartition(clean_data_training$classe, p = 0.7, list = FALSE)
+training <- clean_data_training[inTrain, ]
+testing <- clean_data_training[-inTrain, ]
+```
+
+## Decision Tree Model
+```{r}
+set.seed(2001)
+DTModel_Fit <- train(classe ~ ., method = "rpart", trControl = trainControl(method = "cv", number = 5, verboseIter = FALSE), data = training, na.action = na.pass)
+
+DTModel_Pred <- predict(DTModel_Fit, newdata = testing)
+DTModel_CM <- confusionMatrix(DTModel_Pred, as.factor(testing$classe))
+DTModel_CM$table
+```
+
+## Gradient Boost Model
+```{r, echo= FALSE, results='hide'}
+set.seed(2001)
+GBMModel_Fit <- train(classe ~ ., method = "gbm", trControl = trainControl(method = "cv", number = 5, verboseIter = FALSE), data = clean_data_training, na.action = na.pass)
+
+GBMModel_Pred <- predict(GBMModel_Fit, newdata = testing)
+GBMModel_CM <- confusionMatrix(GBMModel_Pred, as.factor(testing$classe))
+GBMModel_CM$table
+```
+
+```{r}
+GBMModel_CM$table
+```
+
+<!-- ## Random Forest -->
+```{r}
+# set.seed(2001)
+# RFModel_Fit <- train(classe ~ ., method = "rf", trControl = trainControl(method = "cv", number = 5, verboseIter = FALSE), data = clean_data_training, na.action = na.pass)
+# 
+# RFModel_Pred <- predict(RFModel_Fit, newdata = testing)
+# RFModel_CM <- confusionMatrix(RFModel_Pred, as.factor(testing$classe))
+# RFModel_CM$table
+```
+
+## Bagging TreeBag
+```{r}
+set.seed(2001)
+TreeBagModel_Fit <- train(classe ~ ., method = "treebag", trControl = trainControl(method = "cv", number = 5, verboseIter = FALSE), data = clean_data_training, na.action = na.pass)
+TreeBagModel_Pred <- predict(TreeBagModel_Fit, newdata = testing)
+TreeBagModel_CM <- confusionMatrix(TreeBagModel_Pred, as.factor(testing$classe))
+TreeBagModel_CM$table
+```
+
+# Model Accuracy
+
+The Decision Model shows an accuracy of `r DTModel_CM$overall[1]`, the Gradient Boost Model shows an accuracy of `r GBMModel_CM$overall[1]`, the Tree Bag Model shows an accuracy of `r TreeBagModel_CM$overall[1]`. Based on these and the confusion matrices above, we select the TreeBag model for the next port of the assignment.
+
+# Prediction
+We run the predict caret function using the TreeBag Model trained in previous section. THe results are as follows
+```{r}
+quizanswer <- predict(TreeBagModel_Fit, newdata = clean_data_testing)
+quizanswer
+```
